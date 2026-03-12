@@ -7,4 +7,4 @@ google-genai
 python-dotenv
 pymupdf
 --extra-index-url https://download.pytorch.org/whl/cpu
-torch==2.2.2
+torch==2.10.0+cpu
