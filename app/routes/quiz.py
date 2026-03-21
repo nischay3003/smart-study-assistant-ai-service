@@ -35,11 +35,16 @@ Format:
 
 @router.post("/generate-quiz")
 def generate_quiz(data:QuizRequest):
+    print(f"DEBUG — Received quiz request: {data}")
+
+    topic=data.get("topic")
+    difficulty=data.get("difficulty") if data.get("difficulty") else "easy"
+    num_questions=data.get("num_questions") if data.get("num_questions") else 5
     prompt=f"""
         {QUIZ_PROMPT}
-        TOPIC: {data.topic}
-        DIFFICULTY: {data.difficulty}
-        NUMBER OF QUESTIONS: {data.num_questions}
+        TOPIC: {topic}
+        DIFFICULTY: {difficulty}
+        NUMBER OF QUESTIONS:{num_questions}
     """
     raw=ask_llm(prompt)
     print("DEBUG — raw quiz response:\n", raw)

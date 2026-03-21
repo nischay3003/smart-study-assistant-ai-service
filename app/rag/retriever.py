@@ -12,7 +12,8 @@ def get_collection(session_id: str):
 def add_documents(chunks: list[str],session_id:str=None):
     ids = []
     embeddings = []
-
+    if(session_id is None):
+        session_id="default"
     collection=get_collection(session_id)
 
 
@@ -27,9 +28,12 @@ def add_documents(chunks: list[str],session_id:str=None):
     )
 
 def retrieve_context(query:str,k:int=4,session_id:str=None):
+    if(session_id is None):
+        session_id="default"
     q_emb=get_embedding(query)
     collection=get_collection(session_id)
     print("Debug -query session_id:", session_id)
+    print("Debug - collection name in retrieve_context:", collection.name)
     results=collection.query(
         query_embeddings=[q_emb],
         n_results=k
