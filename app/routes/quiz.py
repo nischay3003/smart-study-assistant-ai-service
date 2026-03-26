@@ -36,10 +36,10 @@ Format:
 @router.post("/generate-quiz")
 def generate_quiz(data:QuizRequest):
     print(f"DEBUG — Received quiz request: {data}")
-
-    topic=data.get("topic")
-    difficulty=data.get("difficulty") if data.get("difficulty") else "easy"
-    num_questions=data.get("num_questions") if data.get("num_questions") else 5
+    
+    topic=data
+    difficulty="easy"
+    num_questions=5
     prompt=f"""
         {QUIZ_PROMPT}
         TOPIC: {topic}

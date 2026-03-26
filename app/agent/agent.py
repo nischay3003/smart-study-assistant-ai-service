@@ -1,5 +1,5 @@
 from app.rag.retriever import retrieve_context
-from app.routes.quiz import generate_quiz
+from app.routes.quiz import QuizRequest, generate_quiz
 
 
 # def generate_quiz_tool(topic, difficulty="easy", questions=5):
@@ -8,97 +8,81 @@ from app.routes.quiz import generate_quiz
 #         "difficulty": difficulty,
 #         "questions": questions
 #     })
+SYSTEM_PROMPT="""
+You are an AI agent that can ONLY answer using tools.
+
+You CANNOT answer from your own knowledge.
+
+AVAILABLE TOOLS:
+1. search_notes(query)
+2. generate_quiz(topic)
+
+------------------------
+MANDATORY RULES:
+
+1. You MUST ALWAYS start with a Thought.
+2. If the question involves notes → you MUST call search_notes FIRST.
+3. You are NOT allowed to answer without using tools.
+4. DO NOT skip tool usage.
+5. DO NOT use your own knowledge.
+6. DO NOT assume anything.
+
+------------------------
+FORMAT (STRICT — NO DEVIATION):
+
+Thought: what you need to do
+Action: search_notes OR generate_quiz
+Action Input: exact input
+
+------------------------
+
+After tool response:
+
+Observation: tool result
+
+Then continue reasoning again using:
+
+Thought:
+Action:
+Action Input:
+
+------------------------
+
+ONLY when ALL required steps are done:
+
+Final Answer: (based ONLY on tool results)
+
+------------------------
+
+IMPORTANT:
+
+- If you skip tools → you are WRONG
+- If you answer from knowledge → you are WRONG
+- You MUST rely completely on tools
+"""
+import re
+def parse_react_output(text):
+    import re
+
+    if "Final Answer:" in text:
+        final = text.split("Final Answer:")[-1].strip()
+        return {"final": final}
+
+    thought = re.search(r"Thought:\s*(.*)", text)
+    action = re.search(r"Action:\s*(\w+)", text)
+    action_input = re.search(r"Action Input:\s*(.*)", text)
+
+    return {
+        "thought": thought.group(1).strip() if thought else None,
+        "action": action.group(1).strip() if action else None,
+        "input": action_input.group(1).strip() if action_input else None
+    }
 
 tools={
     "search_notes":retrieve_context,
     "generate_quiz":generate_quiz
 }
 
-SYSTEM_PROMPT = """
-You are an AI Study Assistant Agent.
-
-You MUST follow instructions EXACTLY.
-
-----------------------------------------
-
-TOOLS:
-
-1. search_notes(query)
-2. generate_quiz(topic)
-
-----------------------------------------
-
-DECISION RULES:
-
-- If question is about study topics → use search_notes
-- If user asks for quiz → use generate_quiz
-
-----------------------------------------
-
-CRITICAL OUTPUT RULES:
-
-1.
-    a.)If using a tool:
-        → Return ONLY JSON
-        → NO explanation
-        → NO extra text
-        → NO markdown
-        → NO code block
-
-        Correct format ONLY:
-
-        {
-        "tool": "search_notes",
-        "arguments": {
-            "query": "..."
-        }
-        }
-    b.)TOOLS SECTION:
-
-    generate_quiz(data)
-
-    Where data must be:
-
-    {
-    "topic": "...",
-    "difficulty": "easy/medium/hard",
-    "questions": number_of_questions
-    }   
-
-    AND JSON FORMAT SHOULD BE:
-        {
-    "tool": "generate_quiz",
-    "arguments": {
-        "data": {
-        "topic": "DBMS",
-        "difficulty": "easy",
-        "questions": 5
-        }
-    }
-    }
-
-
-2. If NOT using a tool:
-   → Return ONLY final answer (plain text)
-   → No JSON
-
-----------------------------------------
-
-FORBIDDEN:
-
-- Do NOT say "I will..."
-- Do NOT explain your reasoning
-- Do NOT wrap JSON in ```json
-- Do NOT add text before or after JSON
-
-----------------------------------------
-
-AFTER TOOL:
-
-- Use result
-- Give final answer
-- STOP
-"""
 import json
 from app.llm.client import ask_llm
 from app.routes.ask import parse_llm_json
@@ -119,57 +103,62 @@ Question:
     for _ in range(5):  # prevent infinite loop
 
         response = ask_llm(prompt)
-        parsed = parse_llm_json(response)
+        print("LLM response:", response)
+        print(str(_) + "th iteration")
 
-        print("DEBUG response:", response)
+        parsed = parse_react_output(response)
+        print("Parsed LLM response:", parsed)
 
-        # If no JSON → final answer
-        if not parsed:
-            return response
 
-        tool_name = parsed.get("tool")
-        args = parsed.get("arguments", {})
+        if "final" in parsed:
+            print("Final answer found, returning:", parsed["final"])
+            return parsed["final"]
+        
+        action=parsed.get("action")
+        action_input=parsed.get("input")
 
-        # Safety fix
-        if isinstance(args, str):
-            args = {"query": args}
 
-        print("DEBUG tool:", tool_name)
-        print("DEBUG args:", args)
-
-        # Stop condition
-        if not tool_name or tool_name=="":
+        if not action:
             return response
         
-        if tool_name in memory:
-            return str(memory[tool_name])
+        if action in memory:
+            prompt += "\nYou already used this tool. Do not repeat it.\n"
+            continue
+        if action=="NONE":
+            continue
 
-        if tool_name in tools:
-
-            result = tools[tool_name](**args)
-
-            print("DEBUG result:", result)
-
-            # Store in memory
-            memory[tool_name] = result
-
-            # Feed structured result back
-            prompt += f"""
-
-            You already used the tool: {tool_name}
-
-            Here is the result:
-            {result}
-
-            Now you MUST give the FINAL ANSWER.
-
-            STRICT RULES:
-            - DO NOT call any tool again
-            - DO NOT return JSON
-            - ONLY return the final answer
-            """
-
-        else:
+        print("Action to be done: ", action)
+        if action =="search_notes":
+            print("calling search_notes function")
+            result = tools[action](query=action_input)
+            print("search_notes called with query:", action_input)
+        elif action =="generate_quiz":
+            result = tools[action](action_input)
+            print("generate_quiz called with input:", action_input)
+        else :
             return "Invalid tool"
+        
+        memory[action] = result
 
+
+      
+        prompt += f"""
+
+        Observation:
+        {result}
+
+        ----------------------------------------
+
+        Now continue reasoning.
+
+        Check:
+        - Are ALL parts of the user question completed?
+
+        If NOT:
+        → continue with next step
+
+        If YES:
+        → return Final Answer
+        """
+    
     return "Max iterations reached"

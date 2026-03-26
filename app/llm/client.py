@@ -6,12 +6,18 @@ load_dotenv()
 
 client=genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
-def ask_llm(prompt:str)->str:
+def ask_llm(contents, tools=None):
     try:
-        response=client.models.generate_content(
-                model=os.getenv("MODEL_NAME"),contents=prompt
-            )
-        return response.text
+        if tools:
+            response=client.models.generate_content(
+                    model=os.getenv("MODEL_NAME"),contents=contents, tools=tools
+                )
+            return response
+        else:
+            response=client.models.generate_content(
+                    model=os.getenv("MODEL_NAME"),contents=contents
+                )
+            return response.text
     except Exception as e:
         print("LLM error:",e)
         return "Sorry, I had trouble generating a response."
