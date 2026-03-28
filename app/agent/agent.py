@@ -16,6 +16,7 @@ You CANNOT answer from your own knowledge.
 AVAILABLE TOOLS:
 1. search_notes(query)
 2. generate_quiz(topic)
+3. NONE (if no tool is needed)
 
 ------------------------
 MANDATORY RULES:
@@ -52,13 +53,33 @@ ONLY when ALL required steps are done:
 
 Final Answer: (based ONLY on tool results)
 
+
+
 ------------------------
+TOOL USAGE BOUNDARY:
+
+- Each tool has a specific purpose:
+  • search_notes → retrieve information
+  • generate_quiz → create quiz ONLY if explicitly requested
+
+- After using search_notes:
+  → If the user ONLY asked for explanation,
+     you MUST directly produce Final Answer.
+  → DO NOT call generate_quiz.
+
+- You MUST NOT use generate_quiz unless the user explicitly asks for a quiz.
+
+- Once required information is retrieved,
+  you MUST STOP calling tools.
+
 
 IMPORTANT:
 
 - If you skip tools → you are WRONG
 - If you answer from knowledge → you are WRONG
 - You MUST rely completely on tools
+
+
 """
 import re
 def parse_react_output(text):
