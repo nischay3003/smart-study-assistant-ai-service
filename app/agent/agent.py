@@ -18,6 +18,7 @@ AVAILABLE TOOLS:
 2. generate_quiz(topic)
 3. NONE (if no tool is needed)
 
+
 ------------------------
 MANDATORY RULES:
 
@@ -81,9 +82,34 @@ IMPORTANT:
 
 
 """
+
+PLANNER_PROMPT = """
+You are a planning agent.
+
+Your job is to break the user query into clear ordered steps.
+
+Available capabilities:
+- search_notes
+- explain topic
+- generate quiz
+
+RULES:
+- Create a step-by-step plan
+- Each step should be simple and actionable
+- Only include necessary steps
+- Output ONLY JSON
+
+Format:
+{
+  "steps": ["step1", "step2", "step3"]
+}
+"""
+
 import re
+
+
 def parse_react_output(text):
-    import re
+
 
     if "Final Answer:" in text:
         final = text.split("Final Answer:")[-1].strip()
@@ -183,3 +209,59 @@ Question:
         """
     
     return "Max iterations reached"
+
+def create_plan(query):
+    print("Creating plan for query:", query)
+    response = ask_llm(PLANNER_PROMPT + "\nUser Query: " + query)
+    print("Planner LLM response:", response)
+
+    parse_result = parse_llm_json(response)
+    if parse_result and "steps" in parse_result:
+        print("Parsed plan steps:", parse_result["steps"])
+        return parse_result["steps"]
+    else:
+        print("Failed to parse plan, returning empty steps.")
+        return []
+
+def execute_plan(steps, session_id):
+    final_output = []
+
+    for step in steps:
+        print("Executing step:", step)
+
+        if "search" in step.lower():
+            result = retrieve_context(step, session_id)
+            final_output.append(result)
+
+        elif "explain" in step.lower():
+            result = retrieve_context(step, session_id=session_id)
+            final_output.extend(result)
+            print("Context retrieved for explanation:", result)
+            context = "\n".join(final_output)
+            print("Context for explanation:", context)
+            prompt=f"""
+                    Explain clearly using provided context only.
+                    {context}
+                    Explain:
+                """ 
+            response = ask_llm(
+                prompt
+            )
+            print("Explanation response:", response)
+            final_output.append(response)
+
+        elif "quiz" in step.lower():
+            response = generate_quiz(step)
+            print("Quiz generated:", response)
+            final_output.extend(response["questions"])
+            print("final_output after quiz generation:", final_output)
+
+    return final_output
+
+def handle_query(query, session_id="default"):
+    print("Handling query with planning agent...")
+    plan = create_plan(query)
+    print("Generated Plan:", plan)
+
+    result = execute_plan(plan, session_id)
+    return result

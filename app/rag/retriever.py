@@ -31,13 +31,17 @@ def retrieve_context(query:str,k:int=4,session_id:str=None):
     if(session_id is None):
         session_id="default"
     q_emb=get_embedding(query)
+    print("Debug - Query embedding:", q_emb)
     collection=get_collection(session_id)
+    
+    #error handling query results
     print("Debug -query session_id:", session_id)
     print("Debug - collection name in retrieve_context:", collection.name)
     results=collection.query(
         query_embeddings=[q_emb],
         n_results=k
     )
+    print("Debug - Raw query results:", results)
     print("Debug - Retrieved documents:", results.get("documents", [[]])[0])
     docs=results.get("documents",[[]])[0]
     return docs

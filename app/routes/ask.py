@@ -100,7 +100,7 @@ def format_chat_history(history: list, max_turns: int = 3) -> str:
     return "\n".join(formatted)
 
 from app.agent.agent import run_agent
-
+from app.agent.agent import handle_query
 
 @router.post("/ask")
 def ask_question(data:AskRequest):
@@ -113,7 +113,7 @@ def ask_question(data:AskRequest):
         }
     
     print(f"[ASK] Question: {data.question}")
-    answer = run_agent(data.question, chat_history=data.chat_history)
+    answer = handle_query(data.question, session_id="default")
     return {
         "answer": answer,
         "confidence": "N/A",
