@@ -8,101 +8,133 @@ from app.routes.quiz import QuizRequest, generate_quiz
 #         "difficulty": difficulty,
 #         "questions": questions
 #     })
-SYSTEM_PROMPT="""
-You are an AI agent that can ONLY answer using tools.
-
+SYSTEM_PROMPT = """
+You are a Smart Study Assistant that ONLY answers using tools.
 You CANNOT answer from your own knowledge.
 
 AVAILABLE TOOLS:
-1. search_notes(query)
-2. generate_quiz(topic)
-3. NONE (if no tool is needed)
-
+1. search_notes(query) — retrieves information from the user's notes
+2. generate_quiz(topic) — generates a quiz on a topic
+3. NONE — only for greetings or unrelated conversation
 
 ------------------------
 MANDATORY RULES:
 
-1. You MUST ALWAYS start with a Thought.
-2. If the question involves notes → you MUST call search_notes FIRST.
-3. You are NOT allowed to answer without using tools.
-4. DO NOT skip tool usage.
-5. DO NOT use your own knowledge.
-6. DO NOT assume anything.
+1. ALWAYS start with a Thought.
+2. If the user asks about a topic → call search_notes. Then give Final Answer. STOP.
+3. If the user explicitly asks for a quiz → call generate_quiz. Then give Final Answer. STOP.
+4. NEVER call generate_quiz unless the user uses words like "quiz", "test me", "make a quiz".
+5. NEVER call more than ONE tool per response.
+6. NEVER answer from your own knowledge.
+7. NEVER chain tools together unless the user asks for both in the same message.
 
 ------------------------
-FORMAT (STRICT — NO DEVIATION):
+STRICT FORMAT:
 
 Thought: what you need to do
-Action: search_notes OR generate_quiz
+Action: search_notes OR generate_quiz OR NONE
 Action Input: exact input
-
-------------------------
-
-After tool response:
 
 Observation: tool result
 
-Then continue reasoning again using:
-
-Thought:
-Action:
-Action Input:
+Thought: what the result means
+Final Answer: response based ONLY on the Observation
 
 ------------------------
+EXAMPLES:
 
-ONLY when ALL required steps are done:
+User: "Explain photosynthesis"
+Thought: User wants an explanation. I must search their notes. I will NOT generate a quiz.
+Action: search_notes
+Action Input: photosynthesis
+Observation: <result>
+Thought: I have the explanation. My job is done. I will NOT call any more tools.
+Final Answer: Based on your notes, photosynthesis is...
 
-Final Answer: (based ONLY on tool results)
+---
 
+User: "Quiz me on photosynthesis"
+Thought: User explicitly asked for a quiz. I must call generate_quiz.
+Action: generate_quiz
+Action Input: photosynthesis
+Observation: <quiz>
+Thought: Quiz is ready. My job is done.
+Final Answer: Here is your quiz...
 
+---
+
+User: "Explain photosynthesis and then quiz me"
+Thought: User asked for both explanation AND quiz. I will search notes first.
+Action: search_notes
+Action Input: photosynthesis
+Observation: <result>
+Thought: Now I have the explanation. User also asked for a quiz so I call generate_quiz.
+Action: generate_quiz
+Action Input: photosynthesis
+Observation: <quiz>
+Thought: Both tasks done.
+Final Answer: Here is the explanation... and here is your quiz...
+
+---
+
+User: "Hey!"
+Thought: This is a greeting. No tool needed.
+Action: NONE
+Action Input: NONE
+Final Answer: Hi! Ask me anything from your notes or say quiz me on a topic!
 
 ------------------------
-TOOL USAGE BOUNDARY:
-
-- Each tool has a specific purpose:
-  • search_notes → retrieve information
-  • generate_quiz → create quiz ONLY if explicitly requested
-
-- After using search_notes:
-  → If the user ONLY asked for explanation,
-     you MUST directly produce Final Answer.
-  → DO NOT call generate_quiz.
-
-- You MUST NOT use generate_quiz unless the user explicitly asks for a quiz.
-
-- Once required information is retrieved,
-  you MUST STOP calling tools.
-
-
-IMPORTANT:
-
-- If you skip tools → you are WRONG
-- If you answer from knowledge → you are WRONG
-- You MUST rely completely on tools
-
-
+REMEMBER:
+- search_notes = explanation requests → STOP after Final Answer
+- generate_quiz = ONLY when user says quiz/test me → STOP after Final Answer
+- NEVER assume the user wants a quiz just because you explained a topic
 """
-
 PLANNER_PROMPT = """
-You are a planning agent.
+You are a planning agent for a Smart Study Assistant.
 
-Your job is to break the user query into clear ordered steps.
+Your job is to create a minimal step-by-step plan based ONLY on what the user explicitly asked for.
 
-Available capabilities:
-- search_notes
-- explain topic
-- generate quiz
+AVAILABLE CAPABILITIES:
+- search_notes: use when user asks about a topic or wants an explanation
+- generate_quiz: use ONLY when user explicitly says "quiz", "test me", "make a quiz"
 
-RULES:
-- Create a step-by-step plan
-- Each step should be simple and actionable
-- Only include necessary steps
-- Output ONLY JSON
+------------------------
+STRICT PLANNING RULES:
 
-Format:
+1. ONLY include steps the user explicitly asked for.
+2. NEVER add generate_quiz unless the user clearly asked for a quiz.
+3. NEVER add extra steps to be helpful — do exactly what was asked, nothing more.
+4. Keep the plan as short as possible — minimum steps needed.
+5. Output ONLY valid JSON, no extra text.
+
+------------------------
+EXAMPLES:
+
+User: "Explain Newton's laws"
 {
-  "steps": ["step1", "step2", "step3"]
+  "steps": ["search_notes: Newton's laws"]
 }
+
+User: "Quiz me on Newton's laws"
+{
+  "steps": ["generate_quiz: Newton's laws"]
+}
+
+User: "Explain Newton's laws and quiz me"
+{
+  "steps": ["search_notes: Newton's laws", "generate_quiz: Newton's laws"]
+}
+
+User: "Hey!"
+{
+  "steps": []
+}
+
+------------------------
+REMEMBER:
+- Short plan = good plan
+- Adding unrequested steps = wrong
+- generate_quiz is NEVER assumed — it must be explicitly requested
 """
 
 import re
@@ -225,19 +257,20 @@ def create_plan(query):
 
 def execute_plan(steps, session_id):
     final_output = []
+    context = []
 
     for step in steps:
         print("Executing step:", step)
 
-        if "search" in step.lower():
-            result = retrieve_context(step, session_id)
-            final_output.append(result)
+        # if "search" in step.lower():
+        #     result = retrieve_context(step, session_id=session_id)
+        #     final_output.append(result)
 
-        elif "explain" in step.lower():
-            result = retrieve_context(step, session_id=session_id)
-            final_output.extend(result)
-            print("Context retrieved for explanation:", result)
-            context = "\n".join(final_output)
+        if "search" in step.lower():
+            retrieved_context = retrieve_context(step, session_id=session_id)
+            # final_output.extend(result)
+            # print("Context retrieved for explanation:", result)
+            context = "\n".join(retrieved_context)
             print("Context for explanation:", context)
             prompt=f"""
                     Explain clearly using provided context only.
@@ -256,12 +289,86 @@ def execute_plan(steps, session_id):
             final_output.extend(response["questions"])
             print("final_output after quiz generation:", final_output)
 
-    return final_output
+    return {"answer":final_output,
+            "context":context}
+import json
+
+def clean_json(text):
+    text = text.strip()
+
+    # remove ```json ``` if present
+    if text.startswith("```"):
+        text = text.split("```")[1]
+
+    return text.strip()
+
+
+def verify_response(query, response_text):
+    prompt = f"""
+        You are a verification agent.
+
+        Check if the response fully answers the user query.
+
+        Return ONLY valid JSON.
+        Do NOT add explanation.
+        Do NOT use markdown.
+
+        Format:
+        {{
+        "complete": true or false,
+        "missing": ["list of missing parts"]
+        }}
+
+        User Query:
+        {query}
+
+        Response:
+        {response_text}
+
+        If everything is correct:
+        {{
+        "complete": true,
+        "missing": []
+        }}
+        """
+    print("starting verification with prompt:", prompt)
+    res = ask_llm(prompt)
+    print("Verification LLM response:", res)
+    import logging
+    try:
+        logging.basicConfig(level=logging.DEBUG)
+        cleaned = clean_json(res)
+        logging.debug(f"Cleaned verification response: {cleaned}")
+        print("Cleaned verification response:", cleaned)
+        return json.loads(cleaned)
+
+    except Exception as e:
+        print("Verifier JSON Error:", res)
+
+        # fallback (VERY IMPORTANT)
+        return {
+                "complete": True,
+                "missing": []
+            }
 
 def handle_query(query, session_id="default"):
     print("Handling query with planning agent...")
     plan = create_plan(query)
     print("Generated Plan:", plan)
 
-    result = execute_plan(plan, session_id)
-    return result
+    execution_result = execute_plan(plan, session_id)
+    result=execution_result["answer"]
+    context=execution_result["context"]
+    verification=verify_response(query,result)
+
+    if not verification["complete"]:
+        print("Missing:", verification["missing"])
+
+        # Fix by re-running missing steps
+        fix_steps = verification["missing"]
+
+        fix_result = execute_plan(fix_steps, session_id)
+
+        result += "\n\n[FIXED PART]\n" + fix_result
+
+    return {"answer": result, "context": context}
