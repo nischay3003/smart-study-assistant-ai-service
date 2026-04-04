@@ -114,13 +114,20 @@ def ask_question(data:AskRequest):
     
     print(f"[ASK] Question: {data.question}")
     result = handle_query(data.question, session_id="default")
-    confidence=estimate_confidence(result["context"])
+    
+    evaluation=result["evaluation"]
+
+    # print("Type of evaluation[score]:" + str(type(evaluation["score"])))
+    # print(f"Type of result['context']:{type(result['context'])}")
+    confidence=estimate_confidence(result["context"],evaluation["score"])
+    print("Evaluation:", evaluation)
     # print(f"[ASK] Agent result: {result['answer']}, confidence: {confidence}")
     return {
         "answer": result["answer"],
         "confidence": confidence,
         "sources": [],
-        "topic": guess_topic(data.question)
+        "topic": guess_topic(data.question),
+        "evaluation": evaluation
     }
 
     

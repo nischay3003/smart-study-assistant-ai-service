@@ -90,55 +90,147 @@ REMEMBER:
 - NEVER assume the user wants a quiz just because you explained a topic
 """
 PLANNER_PROMPT = """
-You are a planning agent for a Smart Study Assistant.
+You are a planning agent.
 
-Your job is to create a minimal step-by-step plan based ONLY on what the user explicitly asked for.
+Your job is to convert a user query into a sequence of SIMPLE, ATOMIC steps.
 
-AVAILABLE CAPABILITIES:
-- search_notes: use when user asks about a topic or wants an explanation
-- generate_quiz: use ONLY when user explicitly says "quiz", "test me", "make a quiz"
+--------------------------------
+AVAILABLE ACTIONS:
 
-------------------------
-STRICT PLANNING RULES:
+1. search → retrieve information from notes
+2. explain → explain using retrieved context
+3. quiz → generate quiz
+4. summarize → create final report
 
-1. ONLY include steps the user explicitly asked for.
-2. NEVER add generate_quiz unless the user clearly asked for a quiz.
-3. NEVER add extra steps to be helpful — do exactly what was asked, nothing more.
-4. Keep the plan as short as possible — minimum steps needed.
-5. Output ONLY valid JSON, no extra text.
+--------------------------------
+STRICT RULES (MUST FOLLOW):
 
-------------------------
+1. Each step MUST contain ONLY ONE action.
+2. NEVER combine actions in one step.
+3. ALWAYS separate retrieval and reasoning.
+
+--------------------------------
+MANDATORY PATTERNS:
+
+IF user asks to EXPLAIN:
+→ MUST output EXACTLY:
+[
+  "search <topic>",
+  "explain <topic>"
+]
+
+IF user asks for QUIZ:
+→ MUST include:
+[
+  "search <topic>",
+  "quiz <topic>"
+]
+
+IF user asks for REPORT / ANALYSIS:
+→ MUST output:
+[
+  "search <topic>",
+  "search <subtopic if needed>",
+  "explain <topic>",
+  "summarize <topic>"
+]
+
+--------------------------------
+STEP FORMAT RULES:
+
+- ONLY use these formats:
+  - "search <topic>"
+  - "explain <topic>"
+  - "quiz <topic>"
+  - "summarize <topic>"
+
+- DO NOT use:
+  ❌ search_notes:
+  ❌ explanations inside steps
+  ❌ multiple actions in one step
+
+--------------------------------
 EXAMPLES:
 
-User: "Explain Newton's laws"
+User: explain dbms
+Output:
 {
-  "steps": ["search_notes: Newton's laws"]
+  "steps": ["search dbms", "explain dbms"]
 }
 
-User: "Quiz me on Newton's laws"
+User: generate quiz on dbms
+Output:
 {
-  "steps": ["generate_quiz: Newton's laws"]
+  "steps": ["search dbms", "quiz dbms"]
 }
 
-User: "Explain Newton's laws and quiz me"
+User: create report on dbms indexing
+Output:
 {
-  "steps": ["search_notes: Newton's laws", "generate_quiz: Newton's laws"]
+  "steps": [
+    "search dbms indexing",
+    "search types of indexing",
+    "explain dbms indexing",
+    "summarize dbms indexing"
+  ]
 }
 
-User: "Hey!"
+--------------------------------
+
+Output ONLY valid JSON:
 {
-  "steps": []
+  "steps": ["step1", "step2"]
 }
 
-------------------------
-REMEMBER:
-- Short plan = good plan
-- Adding unrequested steps = wrong
-- generate_quiz is NEVER assumed — it must be explicitly requested
+DO NOT add explanation.
+DO NOT add markdown.
+DO NOT break format.
 """
+EVAL_PROMPT = """
+You are an evaluator.
 
+Evaluate the AI response based on:
+
+1. Correctness
+2. Completeness
+3. Use of context
+
+IMPORTANT RULES:
+- "issues" MUST contain ONLY PROBLEMS.
+- If there are no problems → return empty list [].
+- DO NOT include positive statements in issues.
+
+Return ONLY JSON:
+
+{
+  "score": 1-10,
+  "issues": ["only real problems"],
+  "verdict": "good / average / bad"
+}
+"""
 import re
 
+def evalulate_response(query, response,context):
+    prompt=f"""
+
+    {EVAL_PROMPT}
+    Context:
+    {context}
+    Response:
+    {response}
+    """
+
+    res=ask_llm(prompt)
+    print("Evaluation LLM response:", res)
+    try:
+        return clean_json(res)
+    except Exception as e:
+        print("Evaluation JSON Error:", res)
+        return {
+            "score": 5,
+            "issues": ["Could not parse evaluation response"],
+            "verdict": "average"
+        }
 
 def parse_react_output(text):
 
@@ -241,6 +333,22 @@ Question:
         """
     
     return "Max iterations reached"
+def map_step(step):
+    step = step.lower()
+
+    if "search" in step:
+        return "search"
+
+    elif "explain" in step:
+        return "explain"
+
+    elif "quiz" in step:
+        return "quiz"
+    
+    elif "report" or "summarize" in step:
+        return "report"
+
+    return "unknown"
 
 def create_plan(query):
     print("Creating plan for query:", query)
@@ -261,16 +369,18 @@ def execute_plan(steps, session_id):
 
     for step in steps:
         print("Executing step:", step)
+        action=map_step(step)
 
-        # if "search" in step.lower():
-        #     result = retrieve_context(step, session_id=session_id)
-        #     final_output.append(result)
+        if action=="search":
+            result = retrieve_context(step, session_id=session_id)
+            context.extend(result)
+            
 
-        if "search" in step.lower():
-            retrieved_context = retrieve_context(step, session_id=session_id)
+        elif action=="explain":
+            # retrieved_context = retrieve_context(step, session_id=session_id)
             # final_output.extend(result)
             # print("Context retrieved for explanation:", result)
-            context = "\n".join(retrieved_context)
+            
             print("Context for explanation:", context)
             prompt=f"""
                     Explain clearly using provided context only.
@@ -283,11 +393,23 @@ def execute_plan(steps, session_id):
             print("Explanation response:", response)
             final_output.append(response)
 
-        elif "quiz" in step.lower():
+        elif action=="quiz":
             response = generate_quiz(step)
             print("Quiz generated:", response)
             final_output.extend(response["questions"])
             print("final_output after quiz generation:", final_output)
+
+        elif action=="report":
+            prompt=f"""
+            Create a structured report using the context below.
+
+            Context:
+            {context}
+
+            
+            """
+            response = ask_llm(prompt)
+            final_output.append(response)
 
     return {"answer":final_output,
             "context":context}
@@ -371,4 +493,8 @@ def handle_query(query, session_id="default"):
 
         result += "\n\n[FIXED PART]\n" + fix_result
 
-    return {"answer": result, "context": context}
+    evaluation = evalulate_response(query, result, context)
+    print("Evaluation:", evaluation)
+
+
+    return {"answer": result, "context": context ,"evaluation": evaluation}

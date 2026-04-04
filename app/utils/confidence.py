@@ -1,4 +1,4 @@
-def estimate_confidence(retrieved_docs:list[str])->str:
+def estimate_confidence(retrieved_docs:list[str],eval_score:int)->str:
 
     """
      Very simple heristic for now.
@@ -11,10 +11,22 @@ def estimate_confidence(retrieved_docs:list[str])->str:
     total_len=sum(len(d) for d in retrieved_docs)
 
     if total_len>800:
-        return "high"
+        base= "high"
     elif total_len>300:
-        return "medium"
+        base= "medium"
     else:
-        return "low"
+        base= "low"
     
+
+    if eval_score >= 8:
+        if base == "medium":
+            return "high"
+        return base
+
+    elif eval_score <= 4:
+        if base == "high":
+            return "medium"
+        return "low"
+
+    return base
     
