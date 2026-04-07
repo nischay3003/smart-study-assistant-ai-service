@@ -69,7 +69,6 @@ def parse_llm_json(text):
             return None
     return None
 
-
 def guess_topic(question: str) -> str:
     q = question.lower()
 
@@ -83,7 +82,6 @@ def guess_topic(question: str) -> str:
         return "transactions"
 
     return "general"
-
 
 def format_chat_history(history: list, max_turns: int = 3) -> str:
     if not history:
@@ -103,7 +101,7 @@ from app.agent.agent import run_agent
 from app.agent.agent import handle_query
 
 @router.post("/ask")
-def ask_question(data:AskRequest):
+def ask_question(data:AskRequest,x_session_id: str = Header(None)):
     if not data.question or len(data.question.strip())<3:
         return {
             "answer":"Please provide a valid question.",
@@ -111,15 +109,17 @@ def ask_question(data:AskRequest):
             "sources":[],
             "topic":"general"
         }
+    session_id=x_session_id if x_session_id else "default"
     
     print(f"[ASK] Question: {data.question}")
-    result = handle_query(data.question, session_id="default")
+    result = handle_query(data.question, session_id=session_id)
     
     evaluation=result["evaluation"]
 
     # print("Type of evaluation[score]:" + str(type(evaluation["score"])))
     # print(f"Type of result['context']:{type(result['context'])}")
-    confidence=estimate_confidence(result["context"],evaluation["score"])
+    if(result["context"] and evaluation["score"] is not None):
+        confidence=estimate_confidence(result["context"],evaluation["score"])
     print("Evaluation:", evaluation)
     # print(f"[ASK] Agent result: {result['answer']}, confidence: {confidence}")
     return {

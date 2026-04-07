@@ -339,7 +339,7 @@ def map_step(step):
     if "search" in step:
         return "search"
 
-    elif "explain" in step:
+    elif "explain"  or "explanation" in step:
         return "explain"
 
     elif "quiz" in step:
@@ -363,44 +363,41 @@ def create_plan(query):
         print("Failed to parse plan, returning empty steps.")
         return []
 
-def execute_plan(steps, session_id):
-    final_output = []
-    context = []
+def execute_tool(tool_name, input_data, session_id,context):
+    print(f"Executing tool: {tool_name} with input: {input_data} for session: {session_id}")
+    if tool_name == "search":
+        result= retrieve_context(query=input_data, session_id=session_id)
+        context.extend(res)
+        return result,context
+    elif tool_name == "explain":
+        # res=retrieve_context(step, session_id=session_id)
+        # context.extend(res)
 
-    for step in steps:
-        print("Executing step:", step)
-        action=map_step(step)
+        # final_output.extend(result)
+        # print("Context retrieved for explanation:", result)
 
-        if action=="search":
-            result = retrieve_context(step, session_id=session_id)
-            context.extend(result)
             
-
-        elif action=="explain":
-            # retrieved_context = retrieve_context(step, session_id=session_id)
-            # final_output.extend(result)
-            # print("Context retrieved for explanation:", result)
-            
-            print("Context for explanation:", context)
-            prompt=f"""
+        print("Context for explanation:", context)
+        prompt=f"""
                     Explain clearly using provided context only.
                     {context}
                     Explain:
                 """ 
-            response = ask_llm(
+        response = ask_llm(
                 prompt
             )
-            print("Explanation response:", response)
-            final_output.append(response)
+        print("Explanation response:", response)
+            
 
-        elif action=="quiz":
-            response = generate_quiz(step)
-            print("Quiz generated:", response)
-            final_output.extend(response["questions"])
-            print("final_output after quiz generation:", final_output)
-
-        elif action=="report":
-            prompt=f"""
+        return response,context
+    elif tool_name == "quiz":
+        response = generate_quiz(input_data)
+        print("Quiz generated:", response)
+        # final_output.extend(response["questions"])
+        # print("final_output after quiz generation:", final_output)
+        return response
+    elif tool_name == "report":
+        prompt=f"""
             Create a structured report using the context below.
 
             Context:
@@ -408,8 +405,68 @@ def execute_plan(steps, session_id):
 
             
             """
-            response = ask_llm(prompt)
-            final_output.append(response)
+        response = ask_llm(prompt)
+        return response,context
+    else:
+        return "ERROR: Unknown tool",context
+    
+
+def execute_plan(steps, session_id):
+    final_output = []
+    context = []
+    print("Sessiion ID in execute_plan:", session_id)
+    for step in steps:
+        print("Executing step:", step)
+        action=map_step(step)
+        print("Mapped action:", action)
+
+        response=execute_tool(action, step, session_id)
+        final_output.extend(response if isinstance(response, list) else [response])
+
+        
+
+
+        # if action=="search":
+        #     result = retrieve_context(step, session_id=session_id)
+        #     context.extend(result)
+            
+
+        # elif action=="explain":
+        #     res=retrieve_context(step, session_id=session_id)
+        #     context.extend(res)
+        #     # final_output.extend(result)
+        #     # print("Context retrieved for explanation:", result)
+
+            
+        #     print("Context for explanation:", context)
+        #     prompt=f"""
+        #             Explain clearly using provided context only.
+        #             {context}
+        #             Explain:
+        #         """ 
+        #     response = ask_llm(
+        #         prompt
+        #     )
+        #     print("Explanation response:", response)
+        #     final_output.append(response)
+
+        # elif action=="quiz":
+        #     response = generate_quiz(step)
+        #     print("Quiz generated:", response)
+        #     final_output.extend(response["questions"])
+        #     print("final_output after quiz generation:", final_output)
+
+        # elif action=="report":
+        #     prompt=f"""
+        #     Create a structured report using the context below.
+
+        #     Context:
+        #     {context}
+
+            
+        #     """
+        #     response = ask_llm(prompt)
+        #     final_output.append(response)
 
     return {"answer":final_output,
             "context":context}
@@ -472,9 +529,42 @@ def verify_response(query, response_text):
                 "complete": True,
                 "missing": []
             }
+    
 
-def handle_query(query, session_id="default"):
+def retry_llm_call(prompt, retries=2):
+    for i in range(retries):
+        try:
+            response = ask_llm(prompt)
+
+            if response.text and len(response.text.strip()) > 0:
+                return response.text
+
+        except Exception as e:
+            print(f"Retry {i+1} failed:", e)
+
+    return "ERROR: LLM failed"
+
+
+def safe_json_parse(text):
+    try:
+        return parse_llm_json(text)
+    except Exception:
+        return {
+            "answer": "Sorry, something went wrong while generating response.",
+            "confidence": "low"
+        }
+
+def safe_tool_call(tool_name, input_data, session_id):
+    try:
+        return execute_tool(tool_name, input_data, session_id)
+    except Exception as e:
+        print("Tool error:", e)
+        return "ERROR: Tool failed"
+
+
+def handle_query(query, session_id):
     print("Handling query with planning agent...")
+    print("Session ID in handle_query:", session_id)
     plan = create_plan(query)
     print("Generated Plan:", plan)
 
@@ -487,11 +577,12 @@ def handle_query(query, session_id="default"):
         print("Missing:", verification["missing"])
 
         # Fix by re-running missing steps
+        print("Re-running missing steps...")
         fix_steps = verification["missing"]
-
+        print("Steps to fix:", fix_steps)
         fix_result = execute_plan(fix_steps, session_id)
-
-        result += "\n\n[FIXED PART]\n" + fix_result
+        print("Final result after verification and fixing:", fix_result)
+        result["answer"] += "\n\n[FIXED PART]\n" + fix_result["answer"]
 
     evaluation = evalulate_response(query, result, context)
     print("Evaluation:", evaluation)
