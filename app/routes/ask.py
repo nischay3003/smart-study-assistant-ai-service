@@ -115,8 +115,8 @@ def ask_question(data:AskRequest,x_session_id: str = Header(None)):
     result = handle_query(data.question, session_id=session_id)
     
     evaluation=result["evaluation"]
-
-    # print("Type of evaluation[score]:" + str(type(evaluation["score"])))
+    confidence="low"
+    print("Type of evaluation[score]:" + str(type(evaluation)))
     # print(f"Type of result['context']:{type(result['context'])}")
     if(result["context"] and evaluation["score"] is not None):
         confidence=estimate_confidence(result["context"],evaluation["score"])

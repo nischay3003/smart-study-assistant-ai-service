@@ -40,7 +40,7 @@ def retrieve_context(query:str,k:int=4,session_id:str=None):
         query_embeddings=[q_emb],
         n_results=k
     )
-    print("Debug - Raw query results:", results)
+    # print("Debug - Raw query results:", results)
     print("Debug - Retrieved documents:", results.get("documents", [[]])[0])
     docs=results.get("documents",[[]])[0]
     return docs
