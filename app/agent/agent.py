@@ -220,7 +220,7 @@ def evaluate_response(query, response,context):
     {response}
     """
 
-    res=ask_llm(prompt)
+    res = retry_llm_call(prompt)
     print("Evaluation LLM response:", res)
     print("Type of evaluation response:", type(res))
     try:
@@ -361,10 +361,10 @@ def map_step(step):
 
 def create_plan(query):
     print("Creating plan for query:", query)
-    response = ask_llm(PLANNER_PROMPT + "\nUser Query: " + query)
+    response = retry_llm_call(PLANNER_PROMPT + "\nUser Query: " + query)
     print("Planner LLM response:", response)
 
-    parse_result = parse_llm_json(response)
+    parse_result = safe_json_parse(response)
     if parse_result and "steps" in parse_result:
         print("Parsed plan steps:", parse_result["steps"])
         return parse_result["steps"]
@@ -404,9 +404,7 @@ def execute_tool(tool_name, input_data, session_id,context):
                     {context}
                     Explain:
                 """ 
-        response = ask_llm(
-                prompt
-            )
+        response = retry_llm_call(prompt)
         print("Explanation response:", response)
             
 
@@ -426,7 +424,7 @@ def execute_tool(tool_name, input_data, session_id,context):
 
             
             """
-        response = ask_llm(prompt)
+        response = retry_llm_call(prompt)
         return response
     else:
         raise ValueError("Unknown tool: " + tool_name)
@@ -443,10 +441,17 @@ def execute_plan(steps, session_id):
         print("Mapped action:", action)
 
         response=safe_tool_call(action, step, session_id,context)
-        if isinstance(response, list):
-            final_output.extend(response)
-        else:
-            final_output.append(response)
+
+        # handle error fallback
+        if response == []:
+            print("Tool failed, skipping step")
+            continue
+
+        if action !="search":
+            if isinstance(response, list):
+                final_output.extend(response)
+            else:
+                final_output.append(response)
 
         
 
@@ -566,7 +571,10 @@ def retry_llm_call(prompt, retries=2):
         try:
             response = ask_llm(prompt)
 
-            if response.text and len(response.text.strip()) > 0:
+            if isinstance(response, str) and response.strip():
+                return response
+
+            if hasattr(response, "text") and response.text.strip():
                 return response.text
 
         except Exception as e:
@@ -574,14 +582,13 @@ def retry_llm_call(prompt, retries=2):
 
     return "ERROR: LLM failed"
 
-
 def safe_json_parse(text):
     try:
-        return parse_llm_json(text)
+        parsed = parse_llm_json(text)
+        return parsed if parsed else {"steps": []}
     except Exception:
         return {
-            "answer": "Sorry, something went wrong while generating response.",
-            "confidence": "low"
+            "steps":[]
         }
 
 def safe_tool_call(tool_name, input_data, session_id,context):
@@ -589,7 +596,7 @@ def safe_tool_call(tool_name, input_data, session_id,context):
         return execute_tool(tool_name, input_data, session_id,context)
     except Exception as e:
         print("Tool error:", e)
-        return "ERROR: Tool failed"
+        return []
 
 
 def handle_query(query, session_id):
@@ -612,7 +619,10 @@ def handle_query(query, session_id):
         print("Steps to fix:", fix_steps)
         fix_result = execute_plan(fix_steps, session_id)
         print("Final result after verification and fixing:", fix_result)
-        result += fix_result["answer"]
+        if isinstance(result, list):
+            result.extend(fix_result["answer"])
+        else:
+            result = str(result) + "\n" + str(fix_result["answer"])
         
 
     evaluation = evaluate_response(query, result, context)
