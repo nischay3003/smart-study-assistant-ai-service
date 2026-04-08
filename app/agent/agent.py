@@ -375,10 +375,25 @@ def create_plan(query):
 def execute_tool(tool_name, input_data, session_id,context):
     print(f"Executing tool: {tool_name} with input: {input_data} for session: {session_id}")
     if tool_name == "search":
-        return retrieve_context(query=input_data, session_id=session_id)
+        retrieved_context= retrieve_context(query=input_data, session_id=session_id)
+        seen = set()
+        unique = []
+
+        for doc in retrieved_context:
+            if doc not in seen:
+                unique.append(doc)
+                seen.add(doc)
+
+        retrieved_context = unique
+        if(isinstance(retrieved_context,list)):
+            context.extend(retrieved_context)
+        else:
+            context.append(retrieved_context)
+        print("Context after search:", context)
+        return retrieved_context
     elif tool_name == "explain":
-        res=retrieve_context(input_data, session_id=session_id)
-        context.extend[res]
+        # res=retrieve_context(input_data, session_id=session_id)
+        # context.extend[res]
             # final_output.extend(result)
             # print("Context retrieved for explanation:", result)
 
@@ -427,54 +442,57 @@ def execute_plan(steps, session_id):
         action=map_step(step)
         print("Mapped action:", action)
 
-        # response=safe_tool_call(action, step, session_id)
-        # final_output.extend(response if isinstance(response, list) else [response])
+        response=safe_tool_call(action, step, session_id,context)
+        if isinstance(response, list):
+            final_output.extend(response)
+        else:
+            final_output.append(response)
 
         
 
 
-        if action=="search":
-            result = retrieve_context(step, session_id=session_id)
-            context.extend(result)
+        # if action=="search":
+        #     result = retrieve_context(step, session_id=session_id)
+        #     context.extend(result)
             
 
-        elif action=="explain":
-            # retrieved_context=retrieve_context(step, session_id=session_id)
-            # context.extend[retrieved_context]
+        # elif action=="explain":
+        #     # retrieved_context=retrieve_context(step, session_id=session_id)
+        #     # context.extend(retrieved_context)
 
-            # final_output.extend(result)
-            # print("Context retrieved for explanation:", result)
-
-            
-            print("Context for explanation:", context)
-            prompt=f"""
-                    Explain clearly using provided context only.
-                    {context}
-                    Explain:
-                """ 
-            response = ask_llm(
-                prompt
-            )
-            print("Explanation response:", response)
-            final_output.append(response)
-
-        elif action=="quiz":
-            response = generate_quiz(step)
-            print("Quiz generated:", response)
-            final_output.extend(response["questions"])
-            print("final_output after quiz generation:", final_output)
-
-        elif action=="report":
-            prompt=f"""
-            Create a structured report using the context below.
-
-            Context:
-            {context}
+        #     # final_output.extend(result)
+        #     # print("Context retrieved for explanation:", result)
 
             
-            """
-            response = ask_llm(prompt)
-            final_output.append(response)
+        #     print("Context for explanation:", context)
+        #     prompt=f"""
+        #             Explain clearly using provided context only.
+        #             {context}
+        #             Explain:
+        #         """ 
+        #     response = ask_llm(
+        #         prompt
+        #     )
+        #     print("Explanation response:", response)
+        #     final_output.append(response)
+
+        # elif action=="quiz":
+        #     response = generate_quiz(step)
+        #     print("Quiz generated:", response)
+        #     final_output.extend(response["questions"])
+        #     print("final_output after quiz generation:", final_output)
+
+        # elif action=="report":
+        #     prompt=f"""
+        #     Create a structured report using the context below.
+
+        #     Context:
+        #     {context}
+
+            
+        #     """
+        #     response = ask_llm(prompt)
+        #     final_output.append(response)
 
     return {"answer":final_output,
             "context":context}
@@ -531,7 +549,7 @@ def verify_response(query, response_text):
         cleaned = clean_json(res)
         logging.debug(f"Cleaned verification response: {cleaned}")
         print("Cleaned verification response:", cleaned)
-        return json.loads(cleaned)
+        return cleaned
 
     except Exception as e:
         print("Verifier JSON Error:", res)
@@ -566,9 +584,9 @@ def safe_json_parse(text):
             "confidence": "low"
         }
 
-def safe_tool_call(tool_name, input_data, session_id):
+def safe_tool_call(tool_name, input_data, session_id,context):
     try:
-        return execute_tool(tool_name, input_data, session_id)
+        return execute_tool(tool_name, input_data, session_id,context)
     except Exception as e:
         print("Tool error:", e)
         return "ERROR: Tool failed"
@@ -594,7 +612,8 @@ def handle_query(query, session_id):
         print("Steps to fix:", fix_steps)
         fix_result = execute_plan(fix_steps, session_id)
         print("Final result after verification and fixing:", fix_result)
-        result["answer"] += "\n\n[FIXED PART]\n" + fix_result["answer"]
+        result += fix_result["answer"]
+        
 
     evaluation = evaluate_response(query, result, context)
     print("Evaluation:", evaluation)

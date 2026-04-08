@@ -30,7 +30,7 @@ def add_documents(chunks: list[str],session_id:str=None):
 def retrieve_context(query:str,k:int=4,session_id:str=None):
     
     q_emb=get_embedding(query)
-    print("Debug - Query embedding:", q_emb)
+    # print("Debug - Query embedding:", q_emb)
     collection=get_collection(session_id)
     
     #error handling query results
