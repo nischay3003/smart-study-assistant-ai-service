@@ -1,5 +1,7 @@
 import chromadb
 from app.rag.embedder import get_embedding
+from app.rag.hasher import chunk_exists, save_chunk_id
+from app.rag.chunker import get_chunk_id
 import uuid
 
 client=chromadb.PersistentClient(path="./chroma_db")
@@ -9,23 +11,50 @@ def get_collection(session_id: str):
     return collection
 
 
-def add_documents(chunks: list[str],session_id:str=None):
-    ids = []
-    embeddings = []
+def add_documents(chunks: list[str],session_id:str=None,file_hash:str=None):
+    
     if(session_id is None):
         session_id="default"
     collection=get_collection(session_id)
 
+    ids = []
+    embeddings = []
+    documents=[]
+    metadatas=[]
 
-    for chunk in chunks:
-        ids.append(str(uuid.uuid4()))  
-        embeddings.append(get_embedding(chunk))
 
-    collection.add(
-        documents=chunks,
-        embeddings=embeddings,
-        ids=ids
-    )
+    for i,chunk in enumerate(chunks):
+        chunk_id=get_chunk_id(chunk)
+        
+        if chunk_exists(chunk_id, session_id):
+            print(f"Debug - Skipping duplicate chunk: {chunk_id}")
+            continue
+
+        embedding=get_embedding(chunk)
+
+        ids.append(chunk_id)
+        embeddings.append(embedding)
+        documents.append(chunk)
+
+        metadatas.append({
+            "chunk_id": chunk_id,
+            "file_hash": file_hash,
+            "session_id": session_id,
+            "chunk_index": i
+        })
+
+
+
+        save_chunk_id(chunk_id, session_id)
+
+    if ids:
+        collection.add(
+            documents=chunks,
+            embeddings=embeddings,
+            ids=ids
+        )
+    
+    return len(ids)
 
 def retrieve_context(query:str,k:int=4,session_id:str=None):
     

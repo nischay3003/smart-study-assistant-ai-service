@@ -16,3 +16,12 @@ def chunk_text(text:str,chunk_size:int=500,overlap:int=50):
         start+=chunk_size-overlap
 
     return chunks
+
+import hashlib
+
+
+def get_chunk_id(chunk: str) -> str:
+    normalized = chunk.strip().lower()
+    return hashlib.md5(normalized.encode("utf-8")).hexdigest()
+
+

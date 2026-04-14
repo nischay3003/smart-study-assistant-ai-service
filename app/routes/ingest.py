@@ -1,8 +1,9 @@
 from fastapi import APIRouter, Header, UploadFile,File
 from pydantic import BaseModel
-from app.rag.chunker import chunk_text
+from app.rag.chunker import chunk_text, get_chunk_id
 from app.rag.retriever import add_documents
 from app.utils.pdf_parser import extract_text_from_pdf
+from app.rag.hasher import check_if_file_exists, get_file_hash, save_file_hash,save_chunk_id, chunk_exists
 
 
 router=APIRouter()
@@ -27,14 +28,27 @@ async def ingest_pdf(file:UploadFile=File(...),x_session_id:str=Header(None)):
 
     file_bytes=await file.read()
 
+    file_hash=get_file_hash(file_bytes)
+
+    if check_if_file_exists(file_hash, session_id):
+        return {
+            "status":"duplicate",
+            "message":"This file has already been ingested for this session."
+        }
+    
+    save_file_hash(file_hash, session_id)
+  
+
+    
+
     text = extract_text_from_pdf(file_bytes)
 
     chunks=chunk_text(text)
 
-    add_documents(chunks,session_id)
+    chunks_added=add_documents(chunks,session_id,file_hash)
 
     return {
         "status":"success",
         "filename":file.filename,
-        "chunks_added":len(chunks)
+        "chunks_added":chunks_added,
     }

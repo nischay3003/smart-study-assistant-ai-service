@@ -2,7 +2,6 @@ fastapi
 uvicorn
 python-multipart
 chromadb
-fastembed
 sentence-transformers
 google-genai
 python-dotenv
