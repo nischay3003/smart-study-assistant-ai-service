@@ -6,7 +6,7 @@ import os
 import whisper
 from app.routes.ask import router as ask_router
 from app.routes.quiz import router as quiz_router
-from app.routes.ingest import router as ingest_router
+from app.routes.document import router as document_router
 from fastapi.middleware.cors import CORSMiddleware
 
 load_dotenv()
@@ -47,7 +47,7 @@ async def speech_to_text(file:UploadFile=File(...)):
     
 
 app.include_router(ask_router)
-app.include_router(ingest_router)
+app.include_router(document_router)
 app.include_router(quiz_router)
 
 

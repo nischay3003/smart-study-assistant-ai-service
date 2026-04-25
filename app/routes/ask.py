@@ -101,7 +101,7 @@ from app.agent.agent import run_agent
 from app.agent.agent import handle_query
 
 @router.post("/ask")
-def ask_question(data:AskRequest,x_session_id: str = Header(None)):
+def ask_question(data:AskRequest,x_chat_id: str = Header(None)):
     if not data.question or len(data.question.strip())<3:
         return {
             "answer":"Please provide a valid question.",
@@ -109,10 +109,11 @@ def ask_question(data:AskRequest,x_session_id: str = Header(None)):
             "sources":[],
             "topic":"general"
         }
-    session_id=x_session_id if x_session_id else "default"
+    print("Ask.py file, chat_id:", x_chat_id)
+    chat_id=x_chat_id if x_chat_id else "default"
     
     print(f"[ASK] Question: {data.question}")
-    result = handle_query(data.question, session_id=session_id)
+    result = handle_query(data.question, chat_id=chat_id)
     
     evaluation=result["evaluation"]
     confidence="low"

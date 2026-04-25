@@ -4,17 +4,19 @@ cur=conn.cursor()
 
 cur.execute("""
 CREATE TABLE IF NOT EXISTS files (
-    session_id TEXT,
+    file_id TEXT,
+    chat_id TEXT,
     file_hash TEXT,
-    PRIMARY KEY (session_id, file_hash)
+           
+    PRIMARY KEY (chat_id,file_id)
 )
 """)
 
 cur.execute("""
 CREATE TABLE IF NOT EXISTS chunks (
-    session_id TEXT,
+    chat_id TEXT,
     chunk_id TEXT,
-    PRIMARY KEY (session_id, chunk_id)
+    PRIMARY KEY (chat_id, chunk_id)
 )
 """)
 

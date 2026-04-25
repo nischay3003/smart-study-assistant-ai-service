@@ -372,10 +372,10 @@ def create_plan(query):
         print("Failed to parse plan, returning empty steps.")
         return []
 
-def execute_tool(tool_name, input_data, session_id,context):
-    print(f"Executing tool: {tool_name} with input: {input_data} for session: {session_id}")
+def execute_tool(tool_name, input_data, chatId,context):
+    print(f"Executing tool: {tool_name} with input: {input_data} for session: {chatId}")
     if tool_name == "search":
-        retrieved_context= retrieve_context(query=input_data, session_id=session_id)
+        retrieved_context= retrieve_context(query=input_data, chatId=chatId)
         seen = set()
         unique = []
 
@@ -430,17 +430,17 @@ def execute_tool(tool_name, input_data, session_id,context):
         raise ValueError("Unknown tool: " + tool_name)
     
 
-def execute_plan(steps, session_id):
+def execute_plan(steps, chatId):
     final_output = []
     context = []
-    print("Sessiion ID in execute_plan:", session_id)
+    print("Chat ID in execute_plan:", chatId)
     for step in steps:
         print("Executing step:", step)
 
         action=map_step(step)
         print("Mapped action:", action)
 
-        response=safe_tool_call(action, step, session_id,context)
+        response=safe_tool_call(action, step, chatId,context)
 
         # handle error fallback
         if response == []:
@@ -591,21 +591,21 @@ def safe_json_parse(text):
             "steps":[]
         }
 
-def safe_tool_call(tool_name, input_data, session_id,context):
+def safe_tool_call(tool_name, input_data, chatId,context):
     try:
-        return execute_tool(tool_name, input_data, session_id,context)
+        return execute_tool(tool_name, input_data, chatId,context)
     except Exception as e:
         print("Tool error:", e)
         return []
 
 
-def handle_query(query, session_id):
+def handle_query(query, chat_id):
     print("Handling query with planning agent...")
-    print("Session ID in handle_query:", session_id)
+    print("Chat ID in handle_query:", chat_id)
     plan = create_plan(query)
     print("Generated Plan:", plan)
 
-    execution_result = execute_plan(plan, session_id)
+    execution_result = execute_plan(plan, chat_id)
     result=execution_result["answer"]
     context=execution_result["context"]
     verification=verify_response(query,result)
@@ -617,7 +617,7 @@ def handle_query(query, session_id):
         print("Re-running missing steps...")
         fix_steps = verification["missing"]
         print("Steps to fix:", fix_steps)
-        fix_result = execute_plan(fix_steps, session_id)
+        fix_result = execute_plan(fix_steps, chat_id)
         print("Final result after verification and fixing:", fix_result)
         if isinstance(result, list):
             result.extend(fix_result["answer"])
