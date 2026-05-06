@@ -83,19 +83,31 @@ def guess_topic(question: str) -> str:
 
     return "general"
 
-def format_chat_history(history: list, max_turns: int = 3) -> str:
+# def format_chat_history(history: list, max_turns: int = 3) -> str:
+#     if not history:
+#         return ""
+#     print("DEBUG - Original chat history:\n", "\n".join([f"{msg.get('role', 'user').upper()}: {msg.get('content', '')}" for msg in history]))
+#     recent = history[-max_turns:]
+#     formatted = []
+
+#     for msg in recent:
+#         role = msg.get("role", "user")
+#         content = msg.get("content", "")
+#         formatted.append(f"{role.upper()}: {content}")
+#     print("DEBUG — formatted chat history:\n", "\n".join(formatted))
+#     return "\n".join(formatted)
+def format_chat_history(history: list) -> str:
     if not history:
         return ""
 
-    recent = history[-max_turns:]
-    formatted = []
+    # get last meaningful user message (not "explain above")
+    for msg in reversed(history):
+        if msg["role"] == "user":
+            content = msg["content"].lower()
+            if "above" not in content and "it" not in content:
+                return f"Previous Topic: {msg['content']}"
 
-    for msg in recent:
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
-        formatted.append(f"{role.upper()}: {content}")
-    print("DEBUG — formatted chat history:\n", "\n".join(formatted))
-    return "\n".join(formatted)
+    return ""
 
 from app.agent.agent import run_agent
 from app.agent.agent import handle_query
@@ -111,9 +123,11 @@ def ask_question(data:AskRequest,x_chat_id: str = Header(None)):
         }
     print("Ask.py file, chat_id:", x_chat_id)
     chat_id=x_chat_id if x_chat_id else "default"
-    
+
+    chat_history_str = format_chat_history(data.chat_history)
+    print("Formatted chat history:\n", chat_history_str)
     print(f"[ASK] Question: {data.question}")
-    result = handle_query(data.question, chat_id=chat_id)
+    result = handle_query(data.question, chat_id=chat_id,chat_history=chat_history_str)
     
     evaluation=result["evaluation"]
     confidence="low"

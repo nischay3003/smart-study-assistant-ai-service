@@ -1,4 +1,4 @@
-from app.rag.retriever import retrieve_context
+from app.rag.retriever import hybrid_retrieve
 from app.routes.quiz import QuizRequest, generate_quiz
 
 
@@ -39,6 +39,7 @@ Observation: tool result
 
 Thought: what the result means
 Final Answer: response based ONLY on the Observation
+
 
 ------------------------
 EXAMPLES:
@@ -139,15 +140,39 @@ IF user asks for REPORT / ANALYSIS:
 STEP FORMAT RULES:
 
 - ONLY use these formats:
-  - "search <topic>"
-  - "explain <topic>"
-  - "quiz <topic>"
-  - "summarize <topic>"
+- "search <topic>"
+  → MUST contain ONLY the core topic (NO style, NO modifiers)
+
+- "explain <topic or full user intent>"
+  → MUST preserve user intent like:
+     "in one line", "in bullet points", "in simple terms", etc.
+- "quiz <topic or full user intent>"
+- "summarize <topic or full user intent>"
+
+- The <topic> should include important modifiers from the user query such as:
+  "in one line", "in simple terms", "in detail", etc.
+
+- Preserve the intent and constraints of the user query in the step.
 
 - DO NOT use:
   ❌ search_notes:
   ❌ explanations inside steps
   ❌ multiple actions in one step
+
+--------------------------------
+IMPORTANT:
+- NEVER include style modifiers in search steps
+- ALWAYS include style modifiers in explain/quiz/summarize steps
+--------------------------------
+CONTEXT (OPTIONAL):
+
+Below is the recent conversation history.
+Use it ONLY to understand context or resolve references like "it", "that", "this".
+
+DO NOT generate steps for history.
+DO NOT repeat previous steps.
+
+If the query contains words like "above", "it", "this", replace them with the topic from chat history.
 
 --------------------------------
 EXAMPLES:
@@ -185,30 +210,44 @@ Output ONLY valid JSON:
 DO NOT add explanation.
 DO NOT add markdown.
 DO NOT break format.
+When generating steps, ALWAYS preserve the user's intent, including style, length, or difficulty level.
 """
 EVAL_PROMPT = """
-You are an evaluator.
+You are a strict evaluator.
 
-Evaluate the AI response based on:
+You MUST return ONLY valid JSON.
+Do NOT include explanations, markdown, headings, or extra text.
+Do NOT write anything before or after the JSON.
 
-1. Correctness
-2. Completeness
-3. Use of context
-
-IMPORTANT RULES:
-- "issues" MUST contain ONLY PROBLEMS.
-- If there are no problems → return empty list [].
-- DO NOT include positive statements in issues.
-
-Return ONLY JSON:
+STRICT OUTPUT FORMAT:
 
 {
-  "score": 1-10,
-  "issues": ["only real problems"],
-  "verdict": "good / average / bad"
+  "score": <integer between 1 and 10>,
+  "issues": ["problem 1", "problem 2"],
+  "verdict": "good" | "average" | "bad"
 }
+
+RULES:
+- "issues" MUST contain ONLY real problems.
+- If there are no problems, return: []
+- "score" MUST be an integer (not "6/10", not text)
+- "verdict" MUST be exactly one of: good, average, bad
+
+EXAMPLE (valid):
+{
+  "score": 6,
+  "issues": ["Missing explanation of indexing", "Weak use of context"],
+  "verdict": "average"
+}
+
+If you do not follow this format EXACTLY, the system will fail.
 """
 import re
+def extract_score(text):
+    match = re.search(r"Score[:\s]*([0-9]+)", text, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    return None
 
 def evaluate_response(query, response,context):
     prompt=f"""
@@ -234,10 +273,10 @@ def evaluate_response(query, response,context):
 
     except Exception as e:
         print("Evaluation JSON Error:", res)
-
+        score = extract_score(res)
         # ✅ Always return consistent structure
         return {
-            "score": None,   # IMPORTANT: use None instead of 5
+            "score": score if score is not None else 0,   # IMPORTANT: use None instead of 5
             "issues": ["Could not parse evaluation response"],
             "verdict": "fallback"
         }
@@ -259,7 +298,7 @@ def parse_react_output(text):
     }
 
 tools={
-    "search_notes":retrieve_context,
+    "search_notes":hybrid_retrieve,
     "generate_quiz":generate_quiz
 }
 
@@ -359,9 +398,9 @@ def map_step(step):
 
     return "unknown"
 
-def create_plan(query):
+def create_plan(query,chat_history=""):
     print("Creating plan for query:", query)
-    response = retry_llm_call(PLANNER_PROMPT + "\nUser Query: " + query)
+    response = retry_llm_call(PLANNER_PROMPT + "\nChat History: " + chat_history + "\nUser Query: " + query)
     print("Planner LLM response:", response)
 
     parse_result = safe_json_parse(response)
@@ -375,7 +414,7 @@ def create_plan(query):
 def execute_tool(tool_name, input_data, chatId,context):
     print(f"Executing tool: {tool_name} with input: {input_data} for session: {chatId}")
     if tool_name == "search":
-        retrieved_context= retrieve_context(query=input_data, chatId=chatId)
+        retrieved_context= hybrid_retrieve(query=input_data, chatId=chatId)
         seen = set()
         unique = []
 
@@ -392,22 +431,64 @@ def execute_tool(tool_name, input_data, chatId,context):
         print("Context after search:", context)
         return retrieved_context
     elif tool_name == "explain":
-        # res=retrieve_context(input_data, session_id=session_id)
-        # context.extend[res]
-            # final_output.extend(result)
-            # print("Context retrieved for explanation:", result)
-
-            
         print("Context for explanation:", context)
-        prompt=f"""
-                    Explain clearly using provided context only.
-                    {context}
-                    Explain:
-                """ 
+        context_text = "\n".join(context) if isinstance(context, list) else str(context)
+
+        prompt = f"""
+            You are an explanation agent.
+
+            STRICT RULES:
+            - Use ONLY the provided context
+            - Follow the user instruction EXACTLY
+            - Do NOT add extra headings or sections
+            - Do NOT go beyond what is asked
+
+            Context:
+            {context_text}
+
+            User Query:
+            {input_data}
+
+            Answer:
+            """
+
+        # prompt = f"""
+        #     You are an intelligent explanation agent.
+
+        #     GOAL:
+        #     Answer the user's query clearly and accurately.
+
+        #     RULES:
+        #     - If relevant context is provided → use it as the primary source
+        #     - If context is missing, empty, or insufficient → answer using your own knowledge
+        #     - Do NOT mention whether context was used or not
+        #     - Always give a complete and useful answer
+
+        #     FORMAT CONTROL:
+        #     - Follow the user's instruction EXACTLY
+        #     Examples:
+        #     - "one line" → return EXACTLY one line
+        #     - "bullet points" → return ONLY bullet points
+        #     - "short" → keep it concise
+        #     - "detailed" → provide full explanation
+
+        #     RESTRICTIONS:
+        #     - Do NOT add unnecessary headings
+        #     - Do NOT repeat the question
+        #     - Do NOT generate unrelated information
+        #     - Keep the answer clean and focused
+
+        #     Context:
+        #     {context_text if context_text.strip() else "EMPTY"}
+
+        #     User Query:
+        #     {input_data}
+
+        #     Answer:
+        #     """
+
         response = retry_llm_call(prompt)
         print("Explanation response:", response)
-            
-
         return response
     elif tool_name == "quiz":
         response = generate_quiz(input_data)
@@ -416,11 +497,14 @@ def execute_tool(tool_name, input_data, chatId,context):
         # print("final_output after quiz generation:", final_output)
         return response
     elif tool_name == "report":
+        context_text = "\n".join(context) if isinstance(context, list) else str(context)
+
+        
         prompt=f"""
             Create a structured report using the context below.
 
             Context:
-            {context}
+            {context_text}
 
             
             """
@@ -598,40 +682,51 @@ def safe_tool_call(tool_name, input_data, chatId,context):
         print("Tool error:", e)
         return []
 
-
-def handle_query(query, chat_id):
+def handle_query(query, chat_id, chat_history=""):
     print("Handling query with planning agent...")
-    print("Chat ID in handle_query:", chat_id)
-    plan = create_plan(query)
-    print("Generated Plan:", plan)
-
+    
+    plan = create_plan(query, chat_history)
     execution_result = execute_plan(plan, chat_id)
-    result=execution_result["answer"]
-    context=execution_result["context"]
-    verification=verify_response(query,result)
 
-    if not verification["complete"]:
-        print("Missing:", verification["missing"])
+    result = execution_result["answer"]
+    context = execution_result["context"]
 
-        # Fix by re-running missing steps
-        print("Re-running missing steps...")
-        fix_steps = verification["missing"]
-        print("Steps to fix:", fix_steps)
-        fix_result = execute_plan(fix_steps, chat_id)
-        print("Final result after verification and fixing:", fix_result)
-        if isinstance(result, list):
-            result.extend(fix_result["answer"])
-        else:
-            result = str(result) + "\n" + str(fix_result["answer"])
-        
-
-    evaluation = evaluate_response(query, result, context)
+    # normalize result
+    result_text = " ".join([str(x) for x in result if x is not None]) if isinstance(result, list) else str(result)
+    # 🔥 FIRST evaluation
+    evaluation = evaluate_response(query, result_text, context)
     print("Evaluation:", evaluation)
-    # evaluation={
-    # "score": 10,
-    # "issues": [],
-    # "verdict": "good"
-    # }
 
+    score = evaluation.get("score", 0)
 
-    return {"answer": result, "context": context ,"evaluation": evaluation}
+    if not isinstance(score, (int, float)):
+        score = 0
+
+    if score < 5:
+        print("Low score → fixing...")
+
+        verification = verify_response(query, result_text)
+
+        if not verification["complete"]:
+           
+
+            fix_query = query + ". Improve answer by fixing: " + ", ".join(verification["missing"])
+            fix_plan = create_plan(fix_query)
+            fix_result = execute_plan(fix_plan, chat_id)
+            context = list(set(context))
+            if isinstance(result, list):
+                result.extend(fix_result["answer"])
+            else:
+                result = str(result) + "\n" + str(fix_result["answer"])
+
+            # recompute result_text after fix
+            result_text = " ".join([str(x) for x in result if x is not None]) if isinstance(result, list) else str(result)
+   
+            # 🔥 FINAL evaluation
+            evaluation = evaluate_response(query, result_text, context)
+
+    return {
+        "answer": result,
+        "context": context,
+        "evaluation": evaluation
+    }

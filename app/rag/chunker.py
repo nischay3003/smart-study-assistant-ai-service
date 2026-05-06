@@ -1,19 +1,22 @@
-def chunk_text(text:str,chunk_size:int=500,overlap:int=50):
-    """
-        We are using simple sliding window chunking .
-        chunk_size: characters
+import re
 
-        This helps in preserving the context....
-    """
+def chunk_text(text, chunk_size=300, overlap=50):
+    sentences = re.split(r'(?<=[.!?]) +', text)
 
-    chunks=[]
-    start=0
+    chunks = []
+    current_chunk = ""
 
-    while start<len(text):
-        end=start+chunk_size
-        chunk=text[start:end]
-        chunks.append(chunk)
-        start+=chunk_size-overlap
+    for sentence in sentences:
+        if len(current_chunk) + len(sentence) <= chunk_size:
+            current_chunk += " " + sentence
+        else:
+            chunks.append(current_chunk.strip())
+            
+            # 🔥 overlap: keep last part
+            current_chunk = current_chunk[-overlap:] + " " + sentence
+
+    if current_chunk:
+        chunks.append(current_chunk.strip())
 
     return chunks
 

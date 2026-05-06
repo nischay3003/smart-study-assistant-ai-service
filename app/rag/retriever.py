@@ -10,8 +10,13 @@ def get_collection(chat_id: str):
     print(f"Debug - Collection name: {collection.name}, Count: {collection.count()}")
     return collection
 
+def keyword_score(query, doc):
+    query_words = set(query.lower().split())
+    doc_words = set(doc.lower().split())
+    return len(query_words & doc_words)
 
-def add_documents(chunks: list[str],chat_id:str=None,file_hash:str=None):
+
+def add_documents(chunks: list[str], chat_id: str = None, file_hash: str = None, doc_id: str = None):
     
     if(chat_id is None):
         chat_id="default"
@@ -40,23 +45,53 @@ def add_documents(chunks: list[str],chat_id:str=None,file_hash:str=None):
             "chunk_id": chunk_id,
             "file_hash": file_hash,
             "chat_id": chat_id,
+            "doc_id": doc_id,
             "chunk_index": i
         })
 
 
 
-        save_chunk_id(chunk_id, chat_id)
+        save_chunk_id(chunk_id, chat_id,doc_id)
 
     if ids:
         collection.add(
             documents=documents,
             embeddings=embeddings,
-            ids=ids
+            ids=ids,
+            metadatas=metadatas
         )
     
     return len(ids)
 
-def retrieve_context(query:str,k:int=4,chatId:str=None):
+def hybrid_retrieve(query, k: int = 3, chatId: str = None):
+    collection = get_collection(chatId)
+
+    # 🔹 semantic search (get more candidates)
+    results = collection.query(
+        query_embeddings=[get_embedding(query)],
+        n_results=10
+    )
+
+    docs = results.get("documents", [[]])[0]
+    distances = results.get("distances", [[]])[0]
+
+    # 🔹 hybrid scoring
+    scored = []
+    for doc, dist in zip(docs, distances):
+        semantic_score = 1 - dist   # higher is better
+        keyword = keyword_score(query, doc)
+
+        # 🔥 combine scores (tunable)
+        final_score = (0.7 * semantic_score) + (0.3 * keyword)
+
+        scored.append((doc, final_score))
+
+    # 🔹 sort
+    scored.sort(key=lambda x: x[1], reverse=True)
+
+    return [doc for doc, _ in scored[:k]]
+
+def retrieve_context(query:str,k:int=3,chatId:str=None):
     
     q_emb=get_embedding(query)
     # print("Debug - Query embedding:", q_emb)
@@ -70,7 +105,7 @@ def retrieve_context(query:str,k:int=4,chatId:str=None):
         n_results=k
     )
     # print("Debug - Raw query results:", results)
-    print("Debug - Retrieved documents:", results.get("documents", [[]])[0])
+    # print("Debug - Retrieved documents:", results.get("documents", [[]])[0])
     docs=results.get("documents",[[]])[0]
     return docs
 
