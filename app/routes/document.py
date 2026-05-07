@@ -4,7 +4,7 @@ from app.rag.chunker import chunk_text, get_chunk_id
 from app.rag.retriever import add_documents
 from app.utils.pdf_parser import extract_text
 from app.rag.hasher import check_if_file_exists, get_file_hash, save_file_hash, get_file_hash_from_doc_id, delete_file_entry
-from app.rag.retriever import get_collection
+from app.rag.retriever import get_collection, add_global_documents
 
 router=APIRouter()
 
@@ -21,6 +21,29 @@ class IngestRequest(BaseModel):
 #         "chunks_added":len(chunks)
 #     }
 
+@router.post("/doc/admin/ingest")
+async def ingest_global_doc(file: UploadFile = File(...), x_doc_id: str = Header(None)):
+
+    text = extract_text(file)
+    doc_id=x_doc_id
+
+    chunks = chunk_text(text)
+
+
+    if not doc_id:
+        return {"status": "error", "message": "doc_id is required"}
+    try:
+
+        file_bytes=await file.read()
+
+        file_hash=get_file_hash(file_bytes)
+
+        add_global_documents(chunks,file_hash=file_hash, doc_id=doc_id)
+
+    except Exception as e:
+        return {"status": "error", "message": f"Failed to ingest document: {str(e)}"}
+
+    return {"status": "success"}
 
 @router.post("/doc/ingest")
 async def ingest_file(file:UploadFile=File(...),x_chat_id:str=Header(None), x_doc_id:str=Header(None)):

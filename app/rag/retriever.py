@@ -10,10 +10,59 @@ def get_collection(chat_id: str):
     print(f"Debug - Collection name: {collection.name}, Count: {collection.count()}")
     return collection
 
+GLOBAL_COLLECTION= client.get_or_create_collection(name="global_notes")  # Separate collection for global docs
+
+
+
 def keyword_score(query, doc):
     query_words = set(query.lower().split())
     doc_words = set(doc.lower().split())
     return len(query_words & doc_words)
+
+def add_global_documents(
+    chunks: list[str],
+    file_hash: str = None,
+    doc_id: str = None
+):
+
+    ids = []
+    embeddings = []
+    documents = []
+    metadatas = []
+
+    for i, chunk in enumerate(chunks):
+
+        chunk_id = get_chunk_id(chunk)
+
+        # optional dedupe
+        if chunk_exists(chunk_id, "global"):
+            continue
+
+        embedding = get_embedding(chunk)
+
+        ids.append(chunk_id)
+        embeddings.append(embedding)
+        documents.append(chunk)
+
+        metadatas.append({
+            "chunk_id": chunk_id,
+            "file_hash": file_hash,
+            "doc_id": doc_id,
+            "source": "global",
+            "chunk_index": i
+        })
+
+        save_chunk_id(chunk_id, "global", doc_id)
+
+    if ids:
+        GLOBAL_COLLECTION.add(
+            ids=ids,
+            embeddings=embeddings,
+            documents=documents,
+            metadatas=metadatas
+        )
+
+    return len(ids)
 
 
 def add_documents(chunks: list[str], chat_id: str = None, file_hash: str = None, doc_id: str = None):
