@@ -17,11 +17,11 @@ import requests
 
 USE_LOCAL = False
 
-def ask_llm(contents):
+async def ask_llm(contents):
     if USE_LOCAL:
-        return ask_ollama(contents)
+        return  ask_ollama(contents)
     else:
-        return ask_openrouter(contents)
+        return await ask_openrouter(contents)
 import time
 
 def ask_ollama(contents):
@@ -67,48 +67,89 @@ def ask_ollama(contents):
     except Exception as e:
         print("Ollama Error:", e)
         return None
-def ask_openrouter(contents):
-    start_time = time.time()   # 🔥 start timer
+import os
+import time
+import httpx
+
+
+async def ask_openrouter(contents):
+
+    start_time = time.time()
+
     try:
-        messages = contents if isinstance(contents, list) else [{"role": "user", "content": str(contents)}]
+
+        messages = (
+            contents
+            if isinstance(contents, list)
+            else [
+                {
+                    "role": "user",
+                    "content": str(contents)
+                }
+            ]
+        )
 
         data = {
             "model": "nvidia/nemotron-3-super-120b-a12b:free",
             "messages": messages,
-            "reasoning": {"enabled": True}
+            "reasoning": {
+                "enabled": True
+            }
         }
+
         api_key = os.getenv("OPEN_ROUTER_API_KEY")
+
         if not api_key:
-            raise ValueError("Missing OPEN_ROUTER_API_KEY")
-        response = requests.post(
-            url="https://openrouter.ai/api/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "HTTP-Referer": "http://localhost:3000",
-                "X-Title": "Planner"
-            },
-            json=data, # This is safer than json.dumps
+            raise ValueError(
+                "Missing OPEN_ROUTER_API_KEY"
+            )
+
+        async with httpx.AsyncClient(
             timeout=45
+        ) as client:
+
+            response = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "HTTP-Referer": "http://localhost:3000",
+                    "X-Title": "Planner"
+                },
+                json=data
+            )
+
+        print(
+            f"Response status: {response.status_code}"
         )
 
-        # DEBUG: Print the raw status and text if it's not JSON
-        print(f"Before Response status: {response.status_code}")
         if response.status_code != 200:
-            print(f"Error {response.status_code}: {response.text}")
+
+            print(
+                f"Error {response.status_code}:",
+                response.text
+            )
+
             return None
-        print(f"After response status check: {response.status_code}")
 
         res = response.json()
-        return res['choices'][0]['message']['content']
+
+        return res["choices"][0]["message"]["content"]
 
     except Exception as e:
-            print(f"Python Error: {e}")
-            return None
-    
+
+        print(f"Python Error: {e}")
+
+        return None
+
     finally:
-        end_time = time.time()   # 🔥 end timer
-        print(f"⏱️ LLM Response Time: {end_time - start_time:.2f} seconds")
-    
+
+        end_time = time.time()
+
+        print(
+            f"⏱️ LLM Response Time:"
+            f" {end_time - start_time:.2f} sec"
+        )
+
 # def ask_llm(contents, tools=None):
  #     try:
  #         if tools:

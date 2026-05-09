@@ -112,33 +112,117 @@ def add_documents(chunks: list[str], chat_id: str = None, file_hash: str = None,
     
     return len(ids)
 
-def hybrid_retrieve(query, k: int = 3, chatId: str = None):
-    collection = get_collection(chatId)
+def hybrid_retrieve(
+    query,
+    k: int = 3,
+    chatId: str = None
+):
 
-    # 🔹 semantic search (get more candidates)
-    results = collection.query(
-        query_embeddings=[get_embedding(query)],
-        n_results=10
+    collections = []
+
+    # 🔹 personal collection
+    if chatId:
+        collections.append(
+            get_collection(chatId)
+        )
+
+    # 🔹 global collection
+    collections.append(
+        get_collection("global")
     )
 
-    docs = results.get("documents", [[]])[0]
-    distances = results.get("distances", [[]])[0]
+    all_scored = []
 
-    # 🔹 hybrid scoring
-    scored = []
-    for doc, dist in zip(docs, distances):
-        semantic_score = 1 - dist   # higher is better
-        keyword = keyword_score(query, doc)
+    query_embedding = get_embedding(query)
 
-        # 🔥 combine scores (tunable)
-        final_score = (0.7 * semantic_score) + (0.3 * keyword)
+    # 🔥 search all collections
+    for collection in collections:
 
-        scored.append((doc, final_score))
+        try:
 
-    # 🔹 sort
-    scored.sort(key=lambda x: x[1], reverse=True)
+            results = collection.query(
+                query_embeddings=[query_embedding],
+                n_results=10
+            )
 
-    return [doc for doc, _ in scored[:k]]
+            docs = results.get(
+                "documents",
+                [[]]
+            )[0]
+
+            distances = results.get(
+                "distances",
+                [[]]
+            )[0]
+
+            metadatas = results.get(
+                "metadatas",
+                [[]]
+            )[0]
+
+            for doc, dist, metadata in zip(
+                docs,
+                distances,
+                metadatas
+            ):
+
+                semantic_score = 1 - dist
+
+                keyword = keyword_score(
+                    query,
+                    doc
+                )
+
+                # 🔥 weighted fusion
+                final_score = (
+                    0.7 * semantic_score
+                    +
+                    0.3 * keyword
+                )
+
+                all_scored.append({
+
+                    "document": doc,
+
+                    "score": final_score,
+
+                    "metadata": metadata
+
+                })
+
+        except Exception as e:
+
+            print(
+                f"Retrieval error from "
+                f"{collection.name}:",
+                e
+            )
+
+    # 🔥 global rerank
+    all_scored.sort(
+        key=lambda x: x["score"],
+        reverse=True
+    )
+
+    # 🔥 dedupe
+    seen = set()
+
+    final_docs = []
+
+    for item in all_scored:
+
+        doc = item["document"]
+
+        if doc not in seen:
+
+            final_docs.append(doc)
+
+            seen.add(doc)
+
+        if len(final_docs) >= k:
+            break
+
+    return final_docs
 
 def retrieve_context(query:str,k:int=3,chatId:str=None):
     

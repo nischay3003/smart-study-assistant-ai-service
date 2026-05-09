@@ -8,6 +8,10 @@ from app.routes.ask import router as ask_router
 from app.routes.quiz import router as quiz_router
 from app.routes.document import router as document_router
 from fastapi.middleware.cors import CORSMiddleware
+from app.routes.ws import router as ws_router
+
+
+
 
 load_dotenv()
 
@@ -49,7 +53,7 @@ async def speech_to_text(file:UploadFile=File(...)):
 app.include_router(ask_router)
 app.include_router(document_router)
 app.include_router(quiz_router)
-
+app.include_router(ws_router)
 
 
 

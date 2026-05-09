@@ -1,5 +1,7 @@
 from app.rag.retriever import hybrid_retrieve
 from app.routes.quiz import QuizRequest, generate_quiz
+from app.streaming.manager import manager
+
 
 
 # def generate_quiz_tool(topic, difficulty="easy", questions=5):
@@ -249,17 +251,19 @@ def extract_score(text):
         return int(match.group(1))
     return None
 
-def evaluate_response(query, response,context):
+async def evaluate_response(query, response,context):
     prompt=f"""
 
     {EVAL_PROMPT}
+    User Query:
+    {query}
     Context:
     {context}
     Response:
     {response}
     """
 
-    res = retry_llm_call(prompt)
+    res =  await retry_llm_call(prompt)
     print("Evaluation LLM response:", res)
     print("Type of evaluation response:", type(res))
     try:
@@ -305,7 +309,7 @@ tools={
 import json
 from app.llm.client import ask_llm
 from app.routes.ask import parse_llm_json
-def run_agent(question, chat_history=[]):
+async def run_agent(question, chat_history=[]):
 
     memory = {}
 
@@ -321,7 +325,7 @@ Question:
 
     for _ in range(5):  # prevent infinite loop
 
-        response = ask_llm(prompt)
+        response = await ask_llm(prompt)
         print("LLM response:", response)
         print(str(_) + "th iteration")
 
@@ -398,9 +402,17 @@ def map_step(step):
 
     return "unknown"
 
-def create_plan(query,chat_history=""):
+async def create_plan(query,chatId,chat_history=""):
     print("Creating plan for query:", query)
-    response = retry_llm_call(PLANNER_PROMPT + "\nChat History: " + chat_history + "\nUser Query: " + query)
+    await manager.send_event(
+        chatId,
+        {
+            "type": "status",
+            "step": "planning",
+            "message": "Creating plan..."
+        }
+    )
+    response =await retry_llm_call(PLANNER_PROMPT + "\nChat History: " + chat_history + "\nUser Query: " + query)
     print("Planner LLM response:", response)
 
     parse_result = safe_json_parse(response)
@@ -411,10 +423,24 @@ def create_plan(query,chat_history=""):
         print("Failed to parse plan, returning empty steps.")
         return []
 
-def execute_tool(tool_name, input_data, chatId,context):
+async def execute_tool(tool_name, input_data, chatId, context):
+    import inspect
     print(f"Executing tool: {tool_name} with input: {input_data} for session: {chatId}")
     if tool_name == "search":
-        retrieved_context= hybrid_retrieve(query=input_data, chatId=chatId)
+        await manager.send_event(
+            chatId,
+            {
+                "type": "status",
+                "step": "retrieving",
+                "message": "Searching notes..."
+            }
+        )
+        # Check if hybrid_retrieve is async
+        if inspect.iscoroutinefunction(hybrid_retrieve):
+            retrieved_context = await hybrid_retrieve(query=input_data, chatId=chatId)
+        else:
+            retrieved_context = hybrid_retrieve(query=input_data, chatId=chatId)
+        
         seen = set()
         unique = []
 
@@ -424,62 +450,43 @@ def execute_tool(tool_name, input_data, chatId,context):
                 seen.add(doc)
 
         retrieved_context = unique
-        if(isinstance(retrieved_context,list)):
+        if(isinstance(retrieved_context, list)):
             context.extend(retrieved_context)
         else:
             context.append(retrieved_context)
         print("Context after search:", context)
+        await manager.send_event(
+            chatId,
+            {
+                "type": "status",
+                "step": "Retrieved",
+                "message": f"Found {len(retrieved_context)} relevant chunks."
+            }
+        )
         return retrieved_context
     elif tool_name == "explain":
         print("Context for explanation:", context)
+        await manager.send_event(
+            chatId,
+            {
+                "type": "status",
+                "step": "generating",
+                "message": "Generating explanation..."
+            }
+        )
         context_text = "\n".join(context) if isinstance(context, list) else str(context)
 
-        prompt = f"""
-            You are an explanation agent.
-
-            STRICT RULES:
-            - Use ONLY the provided context
-            - Follow the user instruction EXACTLY
-            - Do NOT add extra headings or sections
-            - Do NOT go beyond what is asked
-
-            Context:
-            {context_text}
-
-            User Query:
-            {input_data}
-
-            Answer:
-            """
-
         # prompt = f"""
-        #     You are an intelligent explanation agent.
+        #     You are an explanation agent.
 
-        #     GOAL:
-        #     Answer the user's query clearly and accurately.
-
-        #     RULES:
-        #     - If relevant context is provided → use it as the primary source
-        #     - If context is missing, empty, or insufficient → answer using your own knowledge
-        #     - Do NOT mention whether context was used or not
-        #     - Always give a complete and useful answer
-
-        #     FORMAT CONTROL:
-        #     - Follow the user's instruction EXACTLY
-        #     Examples:
-        #     - "one line" → return EXACTLY one line
-        #     - "bullet points" → return ONLY bullet points
-        #     - "short" → keep it concise
-        #     - "detailed" → provide full explanation
-
-        #     RESTRICTIONS:
-        #     - Do NOT add unnecessary headings
-        #     - Do NOT repeat the question
-        #     - Do NOT generate unrelated information
-        #     - Keep the answer clean and focused
+        #     STRICT RULES:
+        #     - Use ONLY the provided context
+        #     - Follow the user instruction EXACTLY
+        #     - Do NOT add extra headings or sections
+        #     - Do NOT go beyond what is asked
 
         #     Context:
-        #     {context_text if context_text.strip() else "EMPTY"}
+        #     {context_text}
 
         #     User Query:
         #     {input_data}
@@ -487,19 +494,96 @@ def execute_tool(tool_name, input_data, chatId,context):
         #     Answer:
         #     """
 
-        response = retry_llm_call(prompt)
+        prompt = f"""
+            You are an intelligent explanation agent.
+
+            GOAL:
+            Answer the user's query clearly and accurately.
+
+            RULES:
+            - If relevant context is provided → use it as the primary source
+            - If context is missing, empty, or insufficient → answer using your own knowledge
+            - Do NOT mention whether context was used or not
+            - Always give a complete and useful answer
+
+            FORMAT CONTROL:
+            - Follow the user's instruction EXACTLY
+            Examples:
+            - "one line" → return EXACTLY one line
+            - "bullet points" → return ONLY bullet points
+            - "short" → keep it concise
+            - "detailed" → provide full explanation
+
+            RESTRICTIONS:
+            - Do NOT add unnecessary headings
+            - Do NOT repeat the question
+            - Do NOT generate unrelated information
+            - Keep the answer clean and focused
+
+            Context:
+            {context_text if context_text.strip() else "EMPTY"}
+
+            User Query:
+            {input_data}
+
+            Answer:
+            """
+
+        response = await retry_llm_call(prompt)
         print("Explanation response:", response)
+        await manager.send_event(
+            chatId,
+            {
+                "type": "status",
+                "step": "Generated",
+                "message": "Explanation generated."
+            }
+        )
         return response
     elif tool_name == "quiz":
-        response = generate_quiz(input_data)
+        await manager.send_event(
+            chatId,
+            {
+                "type": "status",
+                "step": "generating",
+                "message": "Generating quiz..."
+            }
+        )   
+        # Check if generate_quiz is async
+        import inspect
+        if inspect.iscoroutinefunction(generate_quiz):
+            response = await generate_quiz(input_data)
+        else:
+            response = generate_quiz(input_data)
         print("Quiz generated:", response)
-        # final_output.extend(response["questions"])
-        # print("final_output after quiz generation:", final_output)
+        await manager.send_event(
+            chatId,
+            {
+                "type": "status",
+                "step": "Generated",
+                "message": "Quiz generated."
+            }
+        )
         return response
     elif tool_name == "report":
+        await manager.send_event(
+            chatId,
+            {
+                "type": "status",
+                "step": "generating",
+                "message": "Generating report..."
+            }
+        )
         context_text = "\n".join(context) if isinstance(context, list) else str(context)
 
-        
+        await manager.send_event(
+            chatId,
+            {
+                "type": "status",
+                "step": "Retrieved",
+                "message": f"Found {len(context)} relevant chunks."
+            }
+        )
         prompt=f"""
             Create a structured report using the context below.
 
@@ -508,30 +592,38 @@ def execute_tool(tool_name, input_data, chatId,context):
 
             
             """
-        response = retry_llm_call(prompt)
+        response =await retry_llm_call(prompt)
+        await manager.send_event(
+            chatId,
+            {
+                "type": "status",
+                "step": "Generated",
+                "message": "Report generated."
+            }
+        )
         return response
     else:
         raise ValueError("Unknown tool: " + tool_name)
     
 
-def execute_plan(steps, chatId):
+async def execute_plan(steps, chatId):
     final_output = []
     context = []
     print("Chat ID in execute_plan:", chatId)
     for step in steps:
         print("Executing step:", step)
 
-        action=map_step(step)
+        action = map_step(step)
         print("Mapped action:", action)
 
-        response=safe_tool_call(action, step, chatId,context)
+        response = await safe_tool_call(action, step, chatId, context)
 
         # handle error fallback
         if response == []:
             print("Tool failed, skipping step")
             continue
 
-        if action !="search":
+        if action != "search":
             if isinstance(response, list):
                 final_output.extend(response)
             else:
@@ -601,7 +693,7 @@ def clean_json(res):
         print("clean_json failed:", res)
         raise e
 
-def verify_response(query, response_text):
+async def verify_response(query, response_text,chatId):
     prompt = f"""
         You are a verification agent.
 
@@ -629,8 +721,16 @@ def verify_response(query, response_text):
         "missing": []
         }}
         """
+    await manager.send_event(
+        chatId,
+        {
+            "type": "status",
+            "step": "verifying",
+            "message": "Verifying response..."
+        }    
+    )      
     print("starting verification with prompt:", prompt)
-    res = ask_llm(prompt)
+    res = await ask_llm(prompt)
     print("Verification LLM response:", res)
     import logging
     try:
@@ -650,10 +750,10 @@ def verify_response(query, response_text):
             }
     
 
-def retry_llm_call(prompt, retries=2):
+async def retry_llm_call(prompt, retries=2):
     for i in range(retries):
         try:
-            response = ask_llm(prompt)
+            response = await ask_llm(prompt)
 
             if isinstance(response, str) and response.strip():
                 return response
@@ -675,18 +775,19 @@ def safe_json_parse(text):
             "steps":[]
         }
 
-def safe_tool_call(tool_name, input_data, chatId,context):
+async def safe_tool_call(tool_name, input_data, chatId, context):
     try:
-        return execute_tool(tool_name, input_data, chatId,context)
+        result = await execute_tool(tool_name, input_data, chatId, context)
+        return result
     except Exception as e:
         print("Tool error:", e)
         return []
 
-def handle_query(query, chat_id, chat_history=""):
+async def handle_query(query, chat_id, chat_history=""):
     print("Handling query with planning agent...")
     
-    plan = create_plan(query, chat_history)
-    execution_result = execute_plan(plan, chat_id)
+    plan = await create_plan(query,chatId=chat_id, chat_history=chat_history)
+    execution_result = await execute_plan(plan, chat_id)
 
     result = execution_result["answer"]
     context = execution_result["context"]
@@ -694,7 +795,7 @@ def handle_query(query, chat_id, chat_history=""):
     # normalize result
     result_text = " ".join([str(x) for x in result if x is not None]) if isinstance(result, list) else str(result)
     # 🔥 FIRST evaluation
-    evaluation = evaluate_response(query, result_text, context)
+    evaluation = await evaluate_response(query, result_text, context)
     print("Evaluation:", evaluation)
 
     score = evaluation.get("score", 0)
@@ -705,14 +806,14 @@ def handle_query(query, chat_id, chat_history=""):
     if score < 5:
         print("Low score → fixing...")
 
-        verification = verify_response(query, result_text)
+        verification =  await verify_response(query, result_text, chatId=chat_id)
 
         if not verification["complete"]:
            
 
             fix_query = query + ". Improve answer by fixing: " + ", ".join(verification["missing"])
-            fix_plan = create_plan(fix_query)
-            fix_result = execute_plan(fix_plan, chat_id)
+            fix_plan = await create_plan(fix_query,chatId=chat_id, chat_history=chat_history)
+            fix_result = await execute_plan(fix_plan, chat_id)
             context = list(set(context))
             if isinstance(result, list):
                 result.extend(fix_result["answer"])
@@ -723,7 +824,7 @@ def handle_query(query, chat_id, chat_history=""):
             result_text = " ".join([str(x) for x in result if x is not None]) if isinstance(result, list) else str(result)
    
             # 🔥 FINAL evaluation
-            evaluation = evaluate_response(query, result_text, context)
+            evaluation = await evaluate_response(query, result_text, context)
 
     return {
         "answer": result,

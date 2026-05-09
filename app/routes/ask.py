@@ -113,7 +113,7 @@ from app.agent.agent import run_agent
 from app.agent.agent import handle_query
 
 @router.post("/ask")
-def ask_question(data:AskRequest,x_chat_id: str = Header(None)):
+async def ask_question(data:AskRequest,x_chat_id: str = Header(None)):
     if not data.question or len(data.question.strip())<3:
         return {
             "answer":"Please provide a valid question.",
@@ -127,7 +127,7 @@ def ask_question(data:AskRequest,x_chat_id: str = Header(None)):
     chat_history_str = format_chat_history(data.chat_history)
     print("Formatted chat history:\n", chat_history_str)
     print(f"[ASK] Question: {data.question}")
-    result = handle_query(data.question, chat_id=chat_id,chat_history=chat_history_str)
+    result = await handle_query(data.question, chat_id=chat_id,chat_history=chat_history_str)
     
     evaluation=result["evaluation"]
     confidence="low"
